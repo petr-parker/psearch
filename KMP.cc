@@ -8,6 +8,7 @@ class KMP {
 public:
 	string sample;
 	Vertex * vertexes;
+
 	KMP(string sample) {
 		this->sample = sample;
 		int N = sample.size();

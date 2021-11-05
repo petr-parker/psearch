@@ -15,59 +15,12 @@
 #include <sys/times.h>
 #include <pthread.h>
 #include <fstream>
+#include <sys/mman.h>
 
 using namespace std;
 
 #include "help.cc"
 #include "KMP.cc"
-
-void walk_recursive(string const &dirname, vector<string> &ret) {
-    DIR *dir = opendir(dirname.c_str());
-    if (dir == nullptr) {
-        perror(dirname.c_str());
-        return;
-    }
-    for (dirent *de = readdir(dir); de != NULL; de = readdir(dir)) {
-        if (strcmp(".", de->d_name) == 0 || strcmp("..", de->d_name) == 0) continue; // не берём . и ..
-        if (de->d_type == DT_DIR) {
-            walk_recursive(dirname + "/" + de->d_name, ret);
-        } else {
-			ret.push_back(dirname + "/" + de->d_name);
-		}
-    }
-    closedir(dir);
-}
-
-vector<string> walk(string const &dirname) {
-    vector<string> ret;
-    walk_recursive(dirname, ret);
-    return ret;
-}
-
-vector<string> this_walk(string const &dirname) {
-	vector<string> ret;
-    DIR *dir = opendir(dirname.c_str());
-    if (dir == nullptr) {
-        perror(dirname.c_str());
-        return ret;
-    }
-    for (dirent *de = readdir(dir); de != NULL; de = readdir(dir)) {
-        if (de->d_type != DT_DIR) {
-        	ret.push_back(dirname + "/" + de->d_name);
-		}
-    }
-    closedir(dir);
-	return ret;
-}
-
-vector<string> v_str(int argc, char ** argv) {
-	vector<string> ret;
-	for (int i = 1; i < argc; i++) {
-		ret.push_back(string(argv[i]));
-	}
-	return ret;
-}
-
 
 struct args {
 	string file_name;
@@ -80,38 +33,46 @@ void * searcher(void *arg) {
 	string file_name = a->file_name;
 
 	KMP A(sample);
-	
-	string line;
-    ifstream file(file_name); // файл из которого читаем (для линукс путь будет выглядеть по другому)
-	int line_num = 0;
 
-    while(getline(file, line)) {
-		line_num++;
-		if (A.find(line)) {
-			printf("Образец %s найден в файле %s в строке %d:\n", sample.c_str(), file_name.c_str(), line_num);
-			printf("%s\n\n", line.c_str());
-		}
-    }
-
-    file.close();
-
-	/*
 	int fd = open(file_name.c_str(), O_RDWR | O_CREAT, 0666);
+	if (fd < 0) {
+		//printf("Файл \"%s\" недоступен(.\n\n", file_name.c_str());
+		return nullptr;
+	}
+	int n = lseek(fd, 0, SEEK_END);
 
-	char buf[100000] = {0};
-	Vertex * current = A.vertexes; // указатель на первый
-	while (true) {
-		ssize_t rd = read(fd, buf, sizeof buf-1);
-		if (rd <= 0) break;
-		current = A.steps(current, string(buf));
+	void * m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+	if (m == MAP_FAILED) {
+		return nullptr;
+	}
+	char * all = (char *) m;
+
+	int i = 0;
+	int line_start = 0;
+	int line_num = 0;
+	Vertex * current;
+	while (all[i] != 0) {
+		line_num++;
+		current = A.vertexes;
+		line_start = i;
+		for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
+			current = A.step(current, all[j]);
+			i++;
+		}
+		
+		if (current->next == NULL) {
+			printf("Образец \"%s\" найден в файле \"%s\" в строке %d:\n", sample.c_str(), file_name.c_str(), line_num);
+			for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
+				printf("%c", all[j]);
+			}
+			printf("\n\n");
+		}
+		
+		if (all[i] != 0) i++;
 	}
 
-	if (current->next == NULL) {
-		printf("sample found in file %s\n", file_name.c_str());
-	}
-	
-	close(fd);*/
-
+	munmap(all, file_name.size());
+	close(fd);
 	return nullptr;
 }
 
@@ -131,6 +92,11 @@ int main(int argc, char ** argv) {
 		} else {
 			dir_name = com[i];
 		}
+	}
+
+	if (sample == "") {
+		printf("Для поиска укажите образец.\n");
+		return 0;
 	}
 
 	vector<string> all_files;
