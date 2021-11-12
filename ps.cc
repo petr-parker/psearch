@@ -25,6 +25,7 @@ using namespace std;
 struct args {
 	string file_name;
 	string sample;
+	int fd;
 };
 
 void * searcher(void *arg) {
@@ -34,7 +35,7 @@ void * searcher(void *arg) {
 
 	KMP A(sample);
 
-	int fd = open(file_name.c_str(), O_RDWR | O_CREAT, 0666);
+	int fd = a->fd; // open(file_name.c_str(), O_RDWR | O_CREAT, 0666);
 	if (fd < 0) {
 		//printf("Файл \"%s\" недоступен(.\n\n", file_name.c_str());
 		return nullptr;
@@ -76,6 +77,53 @@ void * searcher(void *arg) {
 	return nullptr;
 }
 
+class Queue {
+public:
+	int N;
+	long long int * A;
+	Queue(int N) {
+		A = new long long int[N];
+		this->N = N;
+		for (int i = 0; i < N; i++) {
+			A[i] = 0;
+		}
+	}
+    ~Queue() {
+		delete[] A;
+	}
+	void add(int n, long long int len) {
+		A[n] = A[n] + len;
+	}
+	long long min () {
+		long long int ret = A[0];
+		for (int i = 0; i < N; i++) {
+			if (ret > A[i]) {
+				ret = A[i];
+			}
+		}
+		return ret;
+	}
+	int i_min() {
+		long long m = min();
+		for (int i = 0; i < N; i++) {
+			if (A[i] == m) return i;
+		}
+		return 0;
+	}
+	void reset() {
+		long long m = min();
+		for (int i = 0; i < N; i++) {
+			A[i] = A[i] - m;
+		}
+	}
+	int step(int len) {
+		int n = i_min();
+		add(n, len);
+		reset();
+		return n;
+	}
+};
+
 int main(int argc, char ** argv) {
 	vector<string> com = v_str(argc, argv);
 	string dir_name = ".";
@@ -98,6 +146,10 @@ int main(int argc, char ** argv) {
 		printf("Для поиска укажите образец.\n");
 		return 0;
 	}
+	if (N == 0) {
+		printf("Нельзя искать в 0 потоков.\n");
+		return 0;
+	}
 
 	vector<string> all_files;
 	if (this_dir) {
@@ -105,35 +157,47 @@ int main(int argc, char ** argv) {
 	} else {
 		all_files = walk(dir_name);
 	}
-	
 
 	vector<pthread_t> threads(N);
 	vector<args> argums(N);
 	
-	long int n = 0;
-	int thread_num;
+	long int n;
+	long long int len;
 	int size = all_files.size();
+
+	Queue Q = Queue(N);
+
+	int thread_num;
+	int fd;
 	
-	while (size - n >= N) {
-		for (int i = 0; i < N; i++) {
-			argums[i].file_name = all_files[n];
-			argums[i].sample = sample;
-			pthread_create(&threads[i], nullptr, searcher, &argums[i]);
-			n++;
-		}
-		for (int i = 0; i < N; i++) {
-        	pthread_join(threads[i], nullptr);
-	    }
+	int min_size_N = (size < N ? size : N);
+	for (n = 0; n < min_size_N; n++) {
+		fd = open(all_files[n].c_str(), O_RDWR | O_CREAT, 0666);
+		len = lseek(fd, 0, SEEK_END);
+		thread_num = Q.step(len);
+       
+		argums[thread_num].file_name = all_files[n];
+		argums[thread_num].sample = sample;
+		argums[thread_num].fd = fd; 
+		pthread_create(&threads[n], nullptr, searcher, &argums[thread_num]);
 	}
-	
-	int N_rest = size - n;
-	for (int i = 0; i < N_rest; i++) {
-		argums[i].file_name = all_files[n];
-		argums[i].sample = sample;
-   		pthread_create(&threads[i], nullptr, searcher, &argums[i]);
-        n++;
-    }   
-    for (int i = 0; i < N_rest; i++) {
+
+	while (n < size) {
+		fd = open(all_files[n].c_str(), O_RDWR | O_CREAT, 0666);
+		len = lseek(fd, 0, SEEK_END);
+		thread_num = Q.step(len); // выбираем, какому потоку дать файл на обработку
+		
+		pthread_join(threads[thread_num], nullptr);
+
+     	argums[thread_num].file_name = all_files[n];
+    	argums[thread_num].sample = sample;
+		argums[thread_num].fd = fd;
+	    pthread_create(&threads[thread_num], nullptr, searcher, &argums[thread_num]);
+
+		n++;
+	}
+
+    for (int i = 0; i < min_size_N; i++) {
         pthread_join(threads[i], nullptr);
     }
 }
