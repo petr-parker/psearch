@@ -72,7 +72,7 @@ void * searcher(void *arg) {
 		if (all[i] != 0) i++;
 	}
 
-	munmap(all, file_name.size());
+	munmap(m, file_name.size());
 	close(fd);
 	return nullptr;
 }
@@ -97,7 +97,7 @@ public:
 	long long min () {
 		long long int ret = A[0];
 		for (int i = 0; i < N; i++) {
-			if (ret > A[i]) {
+			if (A[i] < ret) {
 				ret = A[i];
 			}
 		}
@@ -141,7 +141,7 @@ int main(int argc, char ** argv) {
 			dir_name = com[i];
 		}
 	}
-
+	
 	if (sample == "") {
 		printf("Для поиска укажите образец.\n");
 		return 0;
@@ -185,8 +185,12 @@ int main(int argc, char ** argv) {
 	while (n < size) {
 		fd = open(all_files[n].c_str(), O_RDWR | O_CREAT, 0666);
 		len = lseek(fd, 0, SEEK_END);
+		if (len == -1 || fd == -1) {
+			n++;
+			continue;
+		}
 		thread_num = Q.step(len); // выбираем, какому потоку дать файл на обработку
-		
+
 		pthread_join(threads[thread_num], nullptr);
 
      	argums[thread_num].file_name = all_files[n];
