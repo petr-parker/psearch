@@ -23,7 +23,8 @@ using namespace std;
 #include "KMP.cc"
 
 struct args {
-	string file_name;
+	vector<string> file_names;
+	vector<int> fds;
 	string sample;
 	int fd;
 };
@@ -31,49 +32,48 @@ struct args {
 void * searcher(void *arg) {
 	args * a = (args *) arg;
 	string sample = a->sample;
-	string file_name = a->file_name;
+	vector<string> file_names = a->file_names;
+	vector<int> fds = a->fds;
 
 	KMP A(sample);
 
-	int fd = a->fd; // open(file_name.c_str(), O_RDWR | O_CREAT, 0666);
-	if (fd < 0) {
-		//printf("Файл \"%s\" недоступен(.\n\n", file_name.c_str());
-		return nullptr;
-	}
-	int n = lseek(fd, 0, SEEK_END);
+	int fd, n;
+	string file_name;
+	for (int k = 0; k < fds.size(); k++) {
+		n = lseek(fds[k], 0, SEEK_END);
+		void * m = mmap(NULL, n, PROT_READ, MAP_SHARED, fds[k], 0);
+ 		if (m == MAP_FAILED) {
+    	    return nullptr;
+    	}
+    	char * all = (char *) m;
 
-	void * m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
-	if (m == MAP_FAILED) {
-		return nullptr;
-	}
-	char * all = (char *) m;
+		int i = 0;
+		int line_start = 0;
+		int line_num = 0;
+    	Vertex * current;
+    	while (all[i] != 0) {
+        	line_num++;
+        	current = A.vertexes;
+        	line_start = i;
+        	for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
+            	current = A.step(current, all[j]);
+            	i++;
+        	}
 
-	int i = 0;
-	int line_start = 0;
-	int line_num = 0;
-	Vertex * current;
-	while (all[i] != 0) {
-		line_num++;
-		current = A.vertexes;
-		line_start = i;
-		for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
-			current = A.step(current, all[j]);
-			i++;
-		}
-		
-		if (current->next == NULL) {
-			printf("Образец \"%s\" найден в файле \"%s\" в строке %d:\n", sample.c_str(), file_name.c_str(), line_num);
-			for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
-				printf("%c", all[j]);
-			}
-			printf("\n\n");
-		}
-		
-		if (all[i] != 0) i++;
-	}
+        	if (current->next == NULL) {
+            	printf("Образец \"%s\" найден в файле \"%s\" в строке %d:\n", sample.c_str(), file_names[k].c_str(), line_num);
+            	for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
+                	printf("%c", all[j]);
+            	}
+            	printf("\n\n");
+        	}
 
-	munmap(m, file_name.size());
-	close(fd);
+        	if (all[i] != 0) i++;
+    	}
+
+    	munmap(m, n);
+    	close(fds[k]);
+	}
 	return nullptr;
 }
 
@@ -161,16 +161,41 @@ int main(int argc, char ** argv) {
 	vector<pthread_t> threads(N);
 	vector<args> argums(N);
 	
-	long int n;
+
 	long long int len;
 	int size = all_files.size();
 
-	Queue Q = Queue(N);
 
 	int thread_num;
 	int fd;
-	
-	int min_size_N = (size < N ? size : N);
+	vector<vector<string> > file_names(N);
+	vector<vector<int> > fds(N);
+
+	Queue Q = Queue(N);
+	for (int i = 0; i < size; i++) {
+		fd = open(all_files[i].c_str(), O_RDWR | O_CREAT, 0666);
+		if (fd >= 0) {
+			len = lseek(fd, 0, SEEK_END);
+			thread_num = Q.step(len);
+			file_names[thread_num].push_back(all_files[i]);
+			fds[thread_num].push_back(fd);
+		} else {
+			close(fd);
+		}
+	}
+
+	for (int i = 0; i < N; i++) {
+        argums[i].file_names = file_names[i];
+		argums[i].fds = fds[i];
+        argums[i].sample = sample;
+        pthread_create(&threads[i], nullptr, searcher, &argums[thread_num]);
+	}
+
+	for (int i = 0; i < N; i++) {
+		pthread_join(threads[i], nullptr);
+	}
+
+/*
 	for (n = 0; n < min_size_N; n++) {
 		fd = open(all_files[n].c_str(), O_RDWR | O_CREAT, 0666);
 		len = lseek(fd, 0, SEEK_END);
@@ -200,11 +225,6 @@ int main(int argc, char ** argv) {
 
 		n++;
 	}
-
-    for (int i = 0; i < min_size_N; i++) {
-        pthread_join(threads[i], nullptr);
-    }
-
-
+*/
 }
 
