@@ -194,6 +194,5 @@ int main(int argc, char ** argv) {
 	for (int i = 0; i < N; i++) {
 		pthread_join(threads[i], nullptr);
 	}
-
 }
 
