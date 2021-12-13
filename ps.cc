@@ -46,7 +46,7 @@ public:
 		return false;
 	}
 	void skip() {
-        while (curr != NULL && curr->d_type) { //889y9673549528734958234059827304598720398547
+        while (curr != NULL && curr->d_type == DT_DIR) {
             if (strcmp(".", curr->d_name) == 0 || strcmp("..", curr->d_name) == 0) { 
                 curr = readdir(dir);
             } else {
@@ -99,16 +99,46 @@ void * searcher(void *arg) {
 	mutex * mutex = a->mutex;
 	bool * finish = a->finish;
 	
+	int fd, n;
+	KMP A(sample);
+	string file = "";
+
+
+
+
+
+
+
+	bool exit = false;
 	while (true) {
+		while (file == "" && !exit) {
+			mutex->lock();
+			if (!files_to_search->empty()) {
+				file = files_to_search->back();
+				files_to_search->pop_back();
+			} else if (*finish) {
+				exit = true;
+			}
+			mutex->unlock();
+			if (file == "" && !exit) {
+				usleep(100);
+			}
+			printf("exit:%d, file:%s\n", exit, file.c_str());
+		}
+		if (exit) { break; }
+
+		
+		n = lseek(fd, 0, SEEK_END);
 
 
 
-		mutex->lock();
-		if (*finish) { break; }
-		mutex->unlock();
+
+		file = "";
 	}
-	//cout << (*files_to_search).size() << "[{]{}[]{}[][{";
-	//printf("My first file is %s\n", (*files_to_search)[0].c_str());
+
+	
+
+
 /*
 	KMP A(sample);
 
@@ -218,9 +248,6 @@ int main(int argc, char ** argv) {
 			file = w.step();
 		}
 	}
-
-	cout << "Ah hello!!";
-		
 
 	for (int i = 0; i < N; i++) { mutexes[i].lock(); }
 	finish = true;
