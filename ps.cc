@@ -16,32 +16,108 @@
 #include <pthread.h>
 #include <fstream>
 #include <sys/mman.h>
+#include <mutex>
 
 using namespace std;
 
 #include "help.cc"
 #include "KMP.cc"
 
+class Walker {
+public:
+	DIR * dir;
+	dirent * curr;
+	string curr_dirname;
+	vector<string> dirs_to_search;
+
+	Walker(string dirname) {
+		dir = NULL;
+		curr = NULL;
+		dirs_to_search.push_back(dirname);
+	}
+	bool new_dir() {
+		if (!dirs_to_search.empty()) {
+			curr_dirname = dirs_to_search.back();
+			dirs_to_search.pop_back();
+			dir = opendir(curr_dirname.c_str());
+			curr = readdir(dir);
+			return true;
+		}
+		return false;
+	}
+	void skip() {
+        while (curr != NULL && curr->d_type) { //889y9673549528734958234059827304598720398547
+            if (strcmp(".", curr->d_name) == 0 || strcmp("..", curr->d_name) == 0) { 
+                curr = readdir(dir);
+            } else {
+				dirs_to_search.push_back(curr_dirname + "/" + curr->d_name);
+				curr = readdir(dir);
+			}
+        }
+	}
+	string step() {
+		skip();
+		while (curr == NULL) {
+			if (!new_dir()) { break; }
+			skip();
+		}
+
+        if (curr == NULL) { return ""; }
+
+		string ret = curr_dirname + "/" + curr->d_name;
+		curr = readdir(dir);
+		return ret;
+	}
+	string this_step() {
+        if (!dirs_to_search.empty()) {
+			curr_dirname = dirs_to_search.back();
+			dirs_to_search.pop_back();
+			dir = opendir(curr_dirname.c_str());
+			curr = readdir(dir);
+        }
+		while (curr != NULL && curr->d_type == DT_DIR) {
+			curr = readdir(dir);
+		}
+		if (curr == NULL) { return ""; }
+		string ret = curr->d_name;
+		curr = readdir(dir);
+		return ret;
+	}
+};
+
 struct args {
-	vector<string> file_names;
-	vector<int> fds;
+	vector<string> * files_to_search;
 	string sample;
-	int fd;
+	bool * finish;
+	mutex * mutex;
 };
 
 void * searcher(void *arg) {
 	args * a = (args *) arg;
 	string sample = a->sample;
-	vector<string> file_names = a->file_names;
-	vector<int> fds = a->fds;
+	vector<string> * files_to_search = a->files_to_search;
+	mutex * mutex = a->mutex;
+	bool * finish = a->finish;
+	
+	while (true) {
 
+
+
+		mutex->lock();
+		if (*finish) { break; }
+		mutex->unlock();
+	}
+	//cout << (*files_to_search).size() << "[{]{}[]{}[][{";
+	//printf("My first file is %s\n", (*files_to_search)[0].c_str());
+/*
 	KMP A(sample);
 
 	int fd, n;
-	string file_name;
-	for (int k = 0; k < fds.size(); k++) {
-		n = lseek(fds[k], 0, SEEK_END);
-		void * m = mmap(NULL, n, PROT_READ, MAP_SHARED, fds[k], 0);
+	char * file_name;
+	while (!finish) {
+		n = lseek(fd, 0, SEEK_END);
+		void * m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+		close(fd);
  		if (m == MAP_FAILED) {
     	    return nullptr;
     	}
@@ -72,57 +148,9 @@ void * searcher(void *arg) {
     	}
 
     	munmap(m, n);
-    	close(fds[k]);
-	}
+	}*/
 	return nullptr;
 }
-
-class Queue {
-public:
-	int N;
-	long long int * A;
-	Queue(int N) {
-		A = new long long int[N];
-		this->N = N;
-		for (int i = 0; i < N; i++) {
-			A[i] = 0;
-		}
-	}
-    ~Queue() {
-		delete[] A;
-	}
-	void add(int n, long long int len) {
-		A[n] = A[n] + len;
-	}
-	long long min () {
-		long long int ret = A[0];
-		for (int i = 0; i < N; i++) {
-			if (A[i] < ret) {
-				ret = A[i];
-			}
-		}
-		return ret;
-	}
-	int i_min() {
-		long long m = min();
-		for (int i = 0; i < N; i++) {
-			if (A[i] == m) return i;
-		}
-		return 0;
-	}
-	void reset() {
-		long long m = min();
-		for (int i = 0; i < N; i++) {
-			A[i] = A[i] - m;
-		}
-	}
-	int step(int len) {
-		int n = i_min();
-		add(n, len);
-		reset();
-		return n;
-	}
-};
 
 int main(int argc, char ** argv) {
 	vector<string> com = v_str(argc, argv);
@@ -141,7 +169,7 @@ int main(int argc, char ** argv) {
 			dir_name = com[i];
 		}
 	}
-	
+
 	if (sample == "") {
 		printf("Для поиска укажите образец.\n");
 		return 0;
@@ -151,37 +179,64 @@ int main(int argc, char ** argv) {
 		return 0;
 	}
 
-	vector<string> all_files;
-	if (this_dir) {
-		all_files = this_walk(dir_name);
-	} else {
-		all_files = walk(dir_name);
-	}
-
 	vector<pthread_t> threads(N);
 	vector<args> argums(N);
 	
+	vector<mutex> mutexes(N);
+	vector<vector<string> > files_to_search(N);
+	bool finish = false;
+	
+	int thread_num = 0;
+	Walker w(dir_name);
 
-	long long int len;
-	int size = all_files.size();
+    for (int i = 0; i < N; i++) {
+        argums[i].files_to_search = &files_to_search[i];
+        argums[i].sample = sample;
+        argums[i].finish = &finish;
+		argums[i].mutex = &mutexes[i];
+        pthread_create(&threads[i], nullptr, searcher, &argums[i]);
+    }
 
+	if (this_dir) {
+        string file = w.this_step();
+        while (file != "") {
+            mutexes[thread_num].lock();
+            files_to_search[thread_num].push_back(file);
+            mutexes[thread_num].unlock();
 
-	int thread_num;
-	int fd;
-	vector<vector<string> > file_names(N);
-	vector<vector<int> > fds(N);
+			thread_num = (thread_num + 1) % N;
+            file = w.this_step();
+        }
+	} else {
+		string file = w.step();
+		while (file != "") {
+			mutexes[thread_num].lock();
+			files_to_search[thread_num].push_back(file);
+			mutexes[thread_num].unlock();
 
-	Queue Q = Queue(N);
-	for (int i = 0; i < size; i++) {
-		fd = open(all_files[i].c_str(), O_RDWR | O_CREAT, 0666);
-		if (fd >= 0) {
-			len = lseek(fd, 0, SEEK_END);
-			thread_num = Q.step(len);
-			file_names[thread_num].push_back(all_files[i]);
-			fds[thread_num].push_back(fd);
-		} else {
-			close(fd);
+			thread_num = (thread_num + 1) % N;
+			file = w.step();
 		}
+	}
+
+	cout << "Ah hello!!";
+		
+
+	for (int i = 0; i < N; i++) { mutexes[i].lock(); }
+	finish = true;
+    for (int i = 0; i < N; i++) { mutexes[i].unlock(); }   
+
+	for (int i = 0; i < N; i++) {
+        pthread_join(threads[i], nullptr);
+    }
+
+
+/*
+	for (int i = 0; i < size; i++) {
+		mutexes[thread_num].lock();
+		argums[i].files_to_search.push_back();
+		argums[i].sample = sample;
+		mutexes[thread_num].unlock();
 	}
 
 	for (int i = 0; i < N; i++) {
@@ -193,6 +248,6 @@ int main(int argc, char ** argv) {
 
 	for (int i = 0; i < N; i++) {
 		pthread_join(threads[i], nullptr);
-	}
+	}*/
 }
 
