@@ -24,26 +24,6 @@ string join(vector<string> v, string joiner) {
 	return ret;
 }
 
-
-vector<string> input() {
-	vector<string> ret;
-	string s;
-	int i = 0;
-	char c = ' ';
-	while (c != '\n') {
-		scanf("%c", &c);
-		while (c != ' ' && c != '\n') {
-			s = s + c;
-			scanf("%c", &c);
-		}
-		if (s != "") {
-			ret.push_back(s);
-			s = "";
-		}
-	}
-	return ret;
-}
-
 vector<char *> v_c_str(vector<string> &v) {
 	vector<char *> ret;
 	for (int i = 0; i < v.size(); i++) {
@@ -61,42 +41,65 @@ vector<string> v_str(int argc, char ** argv) {
     return ret;
 }
 
-void walk_recursive(string const &dirname, vector<string> &ret) {
-    DIR *dir = opendir(dirname.c_str());
-    if (dir == nullptr) {
-        // perror(dirname.c_str());
-        return;
-    }
-    for (dirent *de = readdir(dir); de != NULL; de = readdir(dir)) {
-        if (strcmp(".", de->d_name) == 0 || strcmp("..", de->d_name) == 0) continue; // не берём . и ..
-        if (de->d_type == DT_DIR) {
-            walk_recursive(dirname + "/" + de->d_name, ret);
-        } else {
-			ret.push_back(dirname + "/" + de->d_name);
-		}
-    }
-    closedir(dir);
-}
+class Walker {
+public:
+    DIR * dir;
+    dirent * curr;
+    string curr_dirname;
+    vector<string> dirs_to_search;
 
-vector<string> walk(string const &dirname) {
-    vector<string> ret;
-    walk_recursive(dirname, ret);
-    return ret;
-}
-
-vector<string> this_walk(string const &dirname) {
-    vector<string> ret;
-    DIR *dir = opendir(dirname.c_str());
-    if (dir == nullptr) {
-        // perror(dirname.c_str());
-        return ret;
+    Walker(string dirname) {
+        dir = NULL;
+        curr = NULL;
+        dirs_to_search.push_back(dirname);
     }
-    for (dirent *de = readdir(dir); de != NULL; de = readdir(dir)) {
-        if (de->d_type != DT_DIR) {
-            ret.push_back(dirname + "/" + de->d_name);
+    bool new_dir() {
+        if (!dirs_to_search.empty()) {
+            curr_dirname = dirs_to_search.back();
+            dirs_to_search.pop_back();
+            dir = opendir(curr_dirname.c_str());
+            curr = readdir(dir);
+            return true;
+        }
+        return false;
+    }
+    void skip() {
+        while (curr != NULL && curr->d_type == DT_DIR) {
+            if (strcmp(".", curr->d_name) == 0 || strcmp("..", curr->d_name) == 0) {
+                curr = readdir(dir);
+            } else {
+                dirs_to_search.push_back(curr_dirname + "/" + curr->d_name);
+                curr = readdir(dir);
+            }
         }
     }
-    closedir(dir);
-    return ret;
-}
+    string step() {
+        skip();
+        while (curr == NULL) {
+            if (!new_dir()) { break; }
+            skip();
+        }
+
+        if (curr == NULL) { return ""; }
+
+        string ret = curr_dirname + "/" + curr->d_name;
+        curr = readdir(dir);
+        return ret;
+    }
+    string this_step() {
+        if (!dirs_to_search.empty()) {
+            curr_dirname = dirs_to_search.back();
+            dirs_to_search.pop_back();
+            dir = opendir(curr_dirname.c_str());
+            curr = readdir(dir);
+        }
+        while (curr != NULL && curr->d_type == DT_DIR) {
+            curr = readdir(dir);
+        }
+        if (curr == NULL) { return ""; }
+        string ret = curr->d_name;
+        curr = readdir(dir);
+        return ret;
+    }
+};
 

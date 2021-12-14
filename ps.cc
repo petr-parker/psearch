@@ -23,162 +23,82 @@ using namespace std;
 #include "help.cc"
 #include "KMP.cc"
 
-class Walker {
-public:
-	DIR * dir;
-	dirent * curr;
-	string curr_dirname;
-	vector<string> dirs_to_search;
-
-	Walker(string dirname) {
-		dir = NULL;
-		curr = NULL;
-		dirs_to_search.push_back(dirname);
-	}
-	bool new_dir() {
-		if (!dirs_to_search.empty()) {
-			curr_dirname = dirs_to_search.back();
-			dirs_to_search.pop_back();
-			dir = opendir(curr_dirname.c_str());
-			curr = readdir(dir);
-			return true;
-		}
-		return false;
-	}
-	void skip() {
-        while (curr != NULL && curr->d_type == DT_DIR) {
-            if (strcmp(".", curr->d_name) == 0 || strcmp("..", curr->d_name) == 0) { 
-                curr = readdir(dir);
-            } else {
-				dirs_to_search.push_back(curr_dirname + "/" + curr->d_name);
-				curr = readdir(dir);
-			}
-        }
-	}
-	string step() {
-		skip();
-		while (curr == NULL) {
-			if (!new_dir()) { break; }
-			skip();
-		}
-
-        if (curr == NULL) { return ""; }
-
-		string ret = curr_dirname + "/" + curr->d_name;
-		curr = readdir(dir);
-		return ret;
-	}
-	string this_step() {
-        if (!dirs_to_search.empty()) {
-			curr_dirname = dirs_to_search.back();
-			dirs_to_search.pop_back();
-			dir = opendir(curr_dirname.c_str());
-			curr = readdir(dir);
-        }
-		while (curr != NULL && curr->d_type == DT_DIR) {
-			curr = readdir(dir);
-		}
-		if (curr == NULL) { return ""; }
-		string ret = curr->d_name;
-		curr = readdir(dir);
-		return ret;
-	}
-};
-
 struct args {
 	vector<string> * files_to_search;
 	string sample;
 	bool * finish;
-	mutex * mutex;
+	mutex * mut;
+	mutex * console;
 };
 
 void * searcher(void *arg) {
 	args * a = (args *) arg;
 	string sample = a->sample;
 	vector<string> * files_to_search = a->files_to_search;
-	mutex * mutex = a->mutex;
+	mutex * mut = a->mut;
 	bool * finish = a->finish;
+	mutex * console = a->console;
 	
 	int fd, n;
+	int i, line_start, line_num;
+	Vertex * current;
+
 	KMP A(sample);
 	string file = "";
-
-
-
-
-
-
+	char * all;
 
 	bool exit = false;
 	while (true) {
 		while (file == "" && !exit) {
-			mutex->lock();
+			mut->lock();
 			if (!files_to_search->empty()) {
 				file = files_to_search->back();
 				files_to_search->pop_back();
+			
 			} else if (*finish) {
 				exit = true;
 			}
-			mutex->unlock();
+			mut->unlock();
 			if (file == "" && !exit) {
-				usleep(100);
+				usleep(1000);
 			}
-			printf("exit:%d, file:%s\n", exit, file.c_str());
 		}
 		if (exit) { break; }
 
-		
-		n = lseek(fd, 0, SEEK_END);
-
-
-
-
-		file = "";
-	}
-
-	
-
-
-/*
-	KMP A(sample);
-
-	int fd, n;
-	char * file_name;
-	while (!finish) {
+		fd = open(file.c_str(), O_RDWR | O_CREAT, 0666);
+		if (fd < 0) { file = ""; continue; }
 		n = lseek(fd, 0, SEEK_END);
 		void * m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
 		close(fd);
- 		if (m == MAP_FAILED) {
-    	    return nullptr;
-    	}
-    	char * all = (char *) m;
+		if (m == MAP_FAILED) { file = ""; continue; }
+		all = (char *) m;
 
-		int i = 0;
-		int line_start = 0;
-		int line_num = 0;
-    	Vertex * current;
-    	while (all[i] != 0) {
-        	line_num++;
-        	current = A.vertexes;
-        	line_start = i;
-        	for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
-            	current = A.step(current, all[j]);
-            	i++;
-        	}
-
-        	if (current->next == NULL) {
-            	printf("Образец \"%s\" найден в файле \"%s\" в строке %d:\n", sample.c_str(), file_names[k].c_str(), line_num);
-            	for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
-                	printf("%c", all[j]);
-            	}
-            	printf("\n\n");
-        	}
-
-        	if (all[i] != 0) i++;
-    	}
-
-    	munmap(m, n);
-	}*/
+		i = 0;
+		line_start = 0;
+		line_num = 0;
+		
+		while (all[i] != 0) {
+			line_num++;
+			current = A.vertexes;
+			line_start = i;
+			for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
+				current = A.step(current, all[j]);
+				i++;
+			}
+			if (current->next == NULL) {
+				console->lock();
+				printf("Образец \"%s\" найден в файле \"%s\" в строке %d:\n", sample.c_str(), file.c_str(), line_num);
+				for (int j = line_start; all[j] != 0 && all[j] != '\n'; j++) {
+					printf("%c", all[j]);
+				}
+				printf("\n\n");
+				console->unlock();
+			}
+			if (all[i] != 0) i++;
+		}
+		munmap(m, n);
+		file = "";
+	}
 	return nullptr;
 }
 
@@ -218,12 +138,14 @@ int main(int argc, char ** argv) {
 	
 	int thread_num = 0;
 	Walker w(dir_name);
+	mutex console;
 
     for (int i = 0; i < N; i++) {
         argums[i].files_to_search = &files_to_search[i];
         argums[i].sample = sample;
         argums[i].finish = &finish;
-		argums[i].mutex = &mutexes[i];
+		argums[i].mut = &mutexes[i];
+		argums[i].console = & console;
         pthread_create(&threads[i], nullptr, searcher, &argums[i]);
     }
 
@@ -256,25 +178,5 @@ int main(int argc, char ** argv) {
 	for (int i = 0; i < N; i++) {
         pthread_join(threads[i], nullptr);
     }
-
-
-/*
-	for (int i = 0; i < size; i++) {
-		mutexes[thread_num].lock();
-		argums[i].files_to_search.push_back();
-		argums[i].sample = sample;
-		mutexes[thread_num].unlock();
-	}
-
-	for (int i = 0; i < N; i++) {
-        argums[i].file_names = file_names[i];
-		argums[i].fds = fds[i];
-        argums[i].sample = sample;
-        pthread_create(&threads[i], nullptr, searcher, &argums[thread_num]);
-	}
-
-	for (int i = 0; i < N; i++) {
-		pthread_join(threads[i], nullptr);
-	}*/
 }
 
