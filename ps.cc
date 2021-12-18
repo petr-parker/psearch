@@ -27,7 +27,7 @@ struct args {
 	vector<string> * files_to_search;
 	string sample;
 	bool * finish;
-	mutex * mut;
+	mutex * files_mut;
 	mutex * console;
 };
 
@@ -35,10 +35,10 @@ void * searcher(void *arg) {
 	args * a = (args *) arg;
 	string sample = a->sample;
 	vector<string> * files_to_search = a->files_to_search;
-	mutex * mut = a->mut;
+	mutex * files_mut = a->files_mut;
 	bool * finish = a->finish;
 	mutex * console = a->console;
-	
+
 	int fd, n;
 	int i, line_start, line_num;
 	Vertex * current;
@@ -50,17 +50,16 @@ void * searcher(void *arg) {
 	bool exit = false;
 	while (true) {
 		while (file == "" && !exit) {
-			mut->lock();
+			files_mut->lock();
 			if (!files_to_search->empty()) {
 				file = files_to_search->back();
 				files_to_search->pop_back();
-			
 			} else if (*finish) {
 				exit = true;
 			}
-			mut->unlock();
+			files_mut->unlock();
 			if (file == "" && !exit) {
-				usleep(1000);
+				usleep(100);
 			}
 		}
 		if (exit) { break; }
@@ -132,8 +131,8 @@ int main(int argc, char ** argv) {
 	vector<pthread_t> threads(N);
 	vector<args> argums(N);
 	
-	vector<mutex> mutexes(N);
-	vector<vector<string> > files_to_search(N);
+	vector<string> files_to_search;
+	mutex files_mut;
 	bool finish = false;
 	
 	int thread_num = 0;
@@ -141,39 +140,37 @@ int main(int argc, char ** argv) {
 	mutex console;
 
     for (int i = 0; i < N; i++) {
-        argums[i].files_to_search = &files_to_search[i];
+        argums[i].files_to_search = &files_to_search;
         argums[i].sample = sample;
         argums[i].finish = &finish;
-		argums[i].mut = &mutexes[i];
-		argums[i].console = & console;
+		argums[i].files_mut = &files_mut;
+		argums[i].console = &console;
         pthread_create(&threads[i], nullptr, searcher, &argums[i]);
     }
 
 	if (this_dir) {
         string file = w.this_step();
         while (file != "") {
-            mutexes[thread_num].lock();
-            files_to_search[thread_num].push_back(file);
-            mutexes[thread_num].unlock();
+            files_mut.lock();
+            files_to_search.push_back(file);
+            files_mut.unlock();
 
-			thread_num = (thread_num + 1) % N;
             file = w.this_step();
         }
 	} else {
 		string file = w.step();
 		while (file != "") {
-			mutexes[thread_num].lock();
-			files_to_search[thread_num].push_back(file);
-			mutexes[thread_num].unlock();
+			files_mut.lock();
+			files_to_search.push_back(file);
+			files_mut.unlock();
 
-			thread_num = (thread_num + 1) % N;
 			file = w.step();
 		}
 	}
 
-	for (int i = 0; i < N; i++) { mutexes[i].lock(); }
+	files_mut.lock();
 	finish = true;
-    for (int i = 0; i < N; i++) { mutexes[i].unlock(); }   
+	files_mut.unlock();
 
 	for (int i = 0; i < N; i++) {
         pthread_join(threads[i], nullptr);
